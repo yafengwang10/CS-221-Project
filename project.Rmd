@@ -1,0 +1,88 @@
+---
+title: "CS 221 Project Proposal R Code"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Introduction
+
+This R-markdown file contains the R-code for the baseline of my CS 221 project. My project focuses on comparing the performances of different probabilistic classifiers for cardiovascular disease diagnosis. The dataset that I use is the UCI Cleveland heart disease data, which contains a total of 303 observations, 13 feature variables and one categorical outcome variable with 5 class labels. I define two tasks with respect to this data set: (1) The simplified probabilistic classification problem is to take a vector of the 13 feature values, and to output a probability distribution over the two binary values---no heart disease (0) or some heart disease (1-4). (2) The full probabilistic classification problem is to take a vector of the 13 feature values, and to output a probabilisty distribution over the five outcome labels. For task (1), my baseline approach is to train a binary logistic model on a random subset of 70 percent of the Cleveland dataset, and then to use the model to classify the rest of the 30 percent. For task (2), I again adopt a 70-30 training-test split, but I use a multinomial logistic regression as my baseline approach. 
+
+A note about using R-packages: I used standard packages for binary and multinomial logistic regression in R in this project proposal, but I intend to implement these algorithms myself in Python in the final project in order to better learn the mechanics of these algorithms. 
+
+
+
+## 2. Binary Logistic Regression for simplified task
+This "convert" helper function is due to Brigitte Mueller, [Predicting Heart Disease UCI](https://github.com/mbbrigitte/Predicting_heart_disease_UCI/blob/master/heartdisease_UCI.Rmd). I'm borrowing this helper here to change the data type of the Cleveland data read from the website. 
+```{r}
+convert = function(obj,types){
+    for (i in 1:length(obj)){
+        FUN = switch(types[i],character = as.character, 
+                                   numeric = as.numeric, 
+                                   factor = as.factor)
+        obj[,i] = FUN(obj[,i])
+    }
+    obj
+}
+```
+
+The Cleveland data is directly read from the UCI website. Because the web data does not have feature names attached to the data table, I add the feature names here, change the outcome values to binary values (convert all nonzero values to 1), and convert each variable to the appropriate data type using the helper above:
+```{r}
+cleveland.data = read.csv("https://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.cleveland.data",header=FALSE,sep=",",na.strings = '?')
+names(cleveland.data) = c( "age", "sex", "cp", "trestbps", "chol","fbs", "restecg",
+                   "thalach","exang", "oldpeak","slope", "ca", "thal", "num")
+cleveland.data$num[cleveland.data$num > 0] = 1
+chclass = c("numeric","factor","factor","numeric","numeric","factor","factor","numeric","factor","numeric","factor","factor","factor","factor")
+cleveland.data = convert(cleveland.data,chclass)
+```
+
+The training and the test data sets are split randomly using a 70-30 ratio, and then a binary logistic model is trained on the training data and applied to the test data (6 observations are dropped due to missing values):
+```{r}
+require(caTools)
+set.seed(101)
+sample = sample.split(cleveland.data[,1], SplitRatio = 0.70)
+train = subset(cleveland.data, sample == T)
+test = subset(cleveland.data, sample == F)
+logit.model = glm(num ~., data=train ,family=binomial)
+logit.probs = predict(logit.model, test, type = "response")
+table(test$num, logit.probs > 0.5)
+cat("Test set sensitivity is: ", 30 / 39, "\n")
+cat("Test set specificity is:", 38 / 45, "\n")
+cat("Test set accuracy is:", 68/87)
+```
+
+## 3. Multinomial Logistic Regression for the full classification task
+
+
+```{r}
+require(foreign)
+require(nnet)
+require(ggplot2)
+require(reshape2)
+```
+
+The same data is imported from the UCI web again, but this time without the outcome variable being converted to a binary variable. 
+```{r}
+cleveland2.data = read.csv("https://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.cleveland.data",header=FALSE,sep=",",na.strings = '?')
+names(cleveland2.data) = c( "age", "sex", "cp", "trestbps", "chol","fbs", "restecg",
+                   "thalach","exang", "oldpeak","slope", "ca", "thal", "num")
+cleveland2.data = convert(cleveland2.data,chclass)
+```
+
+Again, the training and the test datasets are split using a 70-30 ratio. Note here that the overall accuracy of the multinomial logistic model is much worse (only 0.53) than the accuracy in the binary classification case (around 0.78).
+```{r}
+set.seed(101)
+newsample = sample.split(cleveland2.data[,1], SplitRatio = 0.70)
+newtrain = subset(cleveland2.data, sample == T)
+newtest = subset(cleveland2.data, sample == F)
+cleveland2.data$num = relevel(cleveland2.data$num, ref = "0")
+multinom.model = multinom(num ~., data = newtrain)
+multinom.probs = predict(multinom.model, newdata = newtest, "class")
+predicted.class <- predict(multinom.model, newtest)
+table(newtest$num, predicted.class)
+cat("Overall classification accuracy on the test set is: ", (38 + 5 + 1 + 2) / 87, "\n")
+```
+
