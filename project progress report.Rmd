@@ -1,0 +1,126 @@
+---
+title: "CS 221 Project Progress R Code"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Introduction
+
+This R-markdown file contains the R-code for the project progress report of my CS 221 project. My project focuses on comparing the performances of different classifiers for cardiovascular disease diagnosis. The dataset that I'm currnetly using is the UCI Cleveland heart disease data, which contains four data sets: The Cleveland data set, the Hungarian data set, the Switzerland data set, and the VA data set. I merge all the four data sets, removed 3 features that contributed the most to the missing data problem, and produced a total of 740 observations with 10 features (the last 3 features are removed) and 1 binary outcome variable. In the original data sets, the outcome variable is a 5-level categorical variable, but I collapse all the non-zero values (the number major vessels indicating disease) to 1 and obtain a binary variable for simplicity. 
+
+```{r}
+library(caTools)
+library(caret)
+library(e1071)
+library(randomForest)
+```
+
+
+
+
+## 2. Binary Logistic Regression for simplified task
+This "convert" helper function is due to Brigitte Mueller, [Predicting Heart Disease UCI](https://github.com/mbbrigitte/Predicting_heart_disease_UCI/blob/master/heartdisease_UCI.Rmd). I'm borrowing this helper here to change the data type of the Cleveland data read from the website. 
+```{r}
+convert = function(obj,types){
+    for (i in 1:length(obj)){
+        FUN = switch(types[i],character = as.character, 
+                                   numeric = as.numeric, 
+                                   factor = as.factor)
+        obj[,i] = FUN(obj[,i])
+    }
+    obj
+}
+```
+
+The heart disease data is directly read from the UCI website. Because the web data does not have feature names attached to the data table, I add the feature names here, change the outcome values to binary values (convert all nonzero values to 1), and convert each variable to the appropriate data type using the helper above. The training and the test data sets are split randomly using a 70-30 ratio.
+```{r}
+cleveland.data = read.csv("https://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.cleveland.data",header=FALSE,sep=",",na.strings = '?')
+va.data = read.csv("http://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.va.data",header=FALSE,sep=",",na.strings = '?')
+switzerland.data = read.csv("http://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.switzerland.data",header=FALSE,sep=",",na.strings = '?')
+hungarian.data = read.csv("http://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.hungarian.data",header=FALSE,sep=",",na.strings = '?')
+df_list <- list(cleveland.data, va.data, switzerland.data, hungarian.data)
+combined.data = Reduce(function(x, y) merge(x, y, all=TRUE), df_list, accumulate=FALSE)
+names(combined.data) = c( "age", "sex", "cp", "trestbps", "chol","fbs", "restecg",
+                   "thalach","exang", "oldpeak","slope", "ca", "thal", "num")
+combined.data$num[combined.data$num > 0] = 1
+chclass = c("numeric","factor","factor","numeric","numeric","factor","factor","numeric","factor","numeric","factor","factor","factor","factor")
+combined.data = convert(combined.data,chclass)
+summary(combined.data)
+combined.data = subset(combined.data, select = -c(11, 12, 13))
+#combined.data = subset(combined.data, select = -c(4, 5, 6))
+combined.data = na.omit(combined.data)
+set.seed(100)
+sample = sample.split(combined.data, SplitRatio = 0.70)
+train = subset(combined.data, sample == T)
+test = subset(combined.data, sample == F)
+```
+
+
+Baseline approach: Logistic regression. I first used all the features as predictors, then discovered through checking the p values of the coefficients that only features 2, 3, 8, 9, 10 are statistically signifiant. I then re-run the logistic regression model using only these five features as predictors. 
+```{r}
+logit.model = train(num ~ ., data=train, method = 'glm', family = 'binomial')
+summary(logit.model)
+logit.result = predict(logit.model, test)
+confusionMatrix(test$num, logit.result)
+
+logitS.model = train(num ~ sex +cp + thalach +exang +oldpeak, data=train, method = 'glm', family = 'binomial')
+logitS.result = predict(logitS.model, test)
+confusionMatrix(test$num, logitS.result)
+```
+
+
+
+Approach 2: Naive Bayes classification, without the use of Laplace smoothing. 
+```{r}
+naiveBayes.model = naiveBayes(num ~., data = train)
+naiveBayes.model
+naiveBayes.result = predict(naiveBayes.model, test)
+confusionMatrix(test$num, naiveBayes.result)
+
+naiveBayesS.model = naiveBayes(num ~sex +cp + thalach +exang +oldpeak, data = train)
+naiveBayesS.result = predict(naiveBayesS.model, test)
+confusionMatrix(test$num, naiveBayesS.result)
+```
+
+Approach 3: Support vector machines, using a 3-repeat, 10-fold cross validation to fine tune the hyperparameters, and experimented with both radial and linear kernels. 
+```{r}
+fitControl <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
+set.seed(100)
+svm.model = train(num ~., data = train, method = "svmRadial",
+                 trControl = fitControl,
+                 preProcess = c("center", "scale"),
+                 tuneLength = 10)
+svm.model
+svm.result = predict(svm.model, newdata = test)
+confusionMatrix(test$num, svm.result)
+
+
+
+svmS.model = train(num ~sex +cp + thalach +exang +oldpeak, data = train, 
+                 method = "svmLinear",
+                 trControl = fitControl,
+                 preProcess = c("center", "scale"),
+                 tuneLength = 10)
+
+svmS.result = predict(svmS.model, newdata = test)
+confusionMatrix(test$num, svmS.result)
+```
+
+Approach 4: Random forests, without parameter tuning but with a total of 1000 trees.
+```{r}
+
+set.seed(100)
+rf.model = randomForest(num ~ ., data=train, importance=TRUE, ntree=1000)
+rf.model
+rf.result = predict(rf.model, test)
+confusionMatrix(test$num, rf.result)
+
+rfS.model = randomForest(num ~ sex +cp + thalach +exang +oldpeak, data=train, importance=TRUE, ntree=1000)
+rfS.result = predict(rfS.model, test)
+confusionMatrix(test$num, rfS.result)
+```
+
+
