@@ -1,0 +1,284 @@
+---
+title: "CS 221 Project Final R Code"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# library and helpers
+
+This R-markdown file contains the R-code for the project report of my CS 221 project.
+```{r}
+library(caTools)
+library(caret)
+library(e1071)
+library(MASS)
+library(dplyr)
+library(ggplot2)
+library(naniar)
+#library(randomForest)
+```
+
+This "convert" helper function is due to Brigitte Mueller, [Predicting Heart Disease UCI](https://github.com/mbbrigitte/Predicting_heart_disease_UCI/blob/master/heartdisease_UCI.Rmd). I'm borrowing this helper here to change the data type of the Cleveland data read from the website. 
+```{r}
+convert = function(obj,types){
+    for (i in 1:length(obj)){
+        FUN = switch(types[i],character = as.character, 
+                                   numeric = as.numeric, 
+                                   factor = as.factor)
+        obj[,i] = FUN(obj[,i])
+    }
+    obj
+}
+```
+
+# Data Processing and Visualization
+
+## Data Preprocessing
+The heart disease data are directly read from the UCI website. 
+```{r}
+cleveland.data = read.csv("https://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.cleveland.data",header=FALSE,sep=",",na.strings = '?')
+va.data = read.csv("http://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.va.data",header=FALSE,sep=",",na.strings = '?')
+switzerland.data = read.csv("http://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.switzerland.data",header=FALSE,sep=",",na.strings = '?')
+hungarian.data = read.csv("http://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.hungarian.data",header=FALSE,sep=",",na.strings = '?')
+df_list <- list(cleveland.data, va.data, switzerland.data, hungarian.data)
+combined.data = Reduce(function(x, y) merge(x, y, all=TRUE), df_list, accumulate=FALSE)
+names(combined.data) = c( "age", "sex", "cp", "trestbps", "chol","fbs", "restecg",
+                   "thalach","exang", "oldpeak","slope", "ca", "thal", "status")
+combined.data$status[combined.data$status > 0] = 1
+chclass = c("numeric","factor","factor","numeric","numeric","factor","factor","numeric","factor","numeric","factor","factor","factor","factor")
+combined.data = convert(combined.data,chclass)
+levels(combined.data$status) = c("healthy", "disease")
+levels(combined.data$sex) = c("female", "male")
+summary(combined.data)
+str(combined.data)
+```
+
+## Graphing missing data
+```{r}
+gg_miss_var(combined.data)
+```
+
+## Processing missing data
+```{r}
+combined.data = subset(combined.data, select = -c(11, 12, 13))
+combined.data = na.omit(combined.data)
+```
+
+## Graphics for data exploration
+```{r}
+ggplot(combined.data, aes(x = status)) + geom_bar()
+
+ggplot(combined.data, aes(x = sex, fill=status)) + geom_bar(position="dodge")
+
+ggplot(combined.data, aes(x=age, color = status)) + geom_density()
+
+ggplot(combined.data, aes(x=status, y = age)) + geom_boxplot()
+
+ggplot(combined.data, aes(x = cp, fill=status)) + geom_bar(position="dodge")
+
+ggplot(combined.data, aes(x=trestbps, color = status)) + geom_density()
+ggplot(combined.data, aes(x=status, y = trestbps)) + geom_boxplot()
+
+ggplot(combined.data, aes(x=chol, color = status)) + geom_density()
+ggplot(combined.data, aes(x=status, y = chol)) + geom_boxplot()
+
+ggplot(combined.data, aes(x = fbs, fill=status)) + geom_bar(position="dodge")
+
+ggplot(combined.data, aes(x = restecg, fill=status)) + geom_bar(position="dodge")
+
+ggplot(combined.data, aes(x=thalach, color = status)) + geom_density()
+ggplot(combined.data, aes(x=status, y = thalach)) + geom_boxplot()
+
+ggplot(combined.data, aes(x = exang, fill=status)) + geom_bar(position="dodge")
+
+ggplot(combined.data, aes(x=oldpeak, color = status)) + geom_density()
+ggplot(combined.data, aes(x=status, y = oldpeak)) + geom_boxplot()
+```
+
+## Splitting training and testing data 
+```{r}
+set.seed(100)
+sample = sample.split(combined.data, SplitRatio = 0.70)
+train = subset(combined.data, sample == T)
+test = subset(combined.data, sample == F)
+summary(test)
+ggplot(test, aes(x = status)) + geom_bar()
+```
+
+# Methods and Results
+
+## Baseline approach: Logistic regression.
+
+Training the full model, the model using the five selected features (sex, cp, thalach, exang, oldpeak), and the model using all predictors except trestbps.
+```{r}
+
+logit.model = train(status ~ ., data=train, method = 'glm', family = 'binomial')
+summary(logit.model)
+logit.result = predict(logit.model, test)
+confusionMatrix(test$status, logit.result)
+
+smalllogit.model = train(status ~ sex +cp + thalach +exang +oldpeak, data=train, method = 'glm', family = 'binomial')
+smalllogit.result = predict(smalllogit.model, test)
+confusionMatrix(test$status, smalllogit.result)
+
+allbutonelogit.model = train(status ~ sex +cp + thalach +exang +oldpeak+restecg+fbs+chol+age, data=train, method = 'glm', family = 'binomial')
+allbutonelogit.result = predict(allbutonelogit.model, test)
+confusionMatrix(test$status, allbutonelogit.result)
+```
+
+variable importance for logistic model: t statistic/statistical significance
+```{r}
+importance = varImp(logit.model, scale=FALSE)
+importance
+plot(importance)
+```
+
+
+
+## Approach 2: Naive Bayes classification
+
+Training the full model, the model using the five selected features (sex, cp, thalach, exang, oldpeak), and the model using all predictors except trestbps (best model).
+```{r}
+naiveBayes.model = naiveBayes(status ~., data = train)
+naiveBayes.model
+naiveBayes.result = predict(naiveBayes.model, train)
+confusionMatrix(train$status, naiveBayes.result)
+
+smallnaiveBayes.model = naiveBayes(status ~sex +cp + thalach +exang +oldpeak, data = train)
+smallnaiveBayes.result = predict(smallnaiveBayes.model, test)
+confusionMatrix(test$status, smallnaiveBayes.result)
+
+bestnaiveBayes.model = naiveBayes(status ~sex +cp + thalach +exang +oldpeak+restecg+fbs+chol+age, data = train)
+bestnaiveBayes.result = predict(bestnaiveBayes.model, test)
+confusionMatrix(test$status, bestnaiveBayes.result)
+```
+
+
+## Approach 3: Support vector machines
+
+Using 10-fold, 3-repeat to tune parameter C. Training the full model, the model using the five selected features (sex, cp, thalach, exang, oldpeak), and the model using all predictors except trestbps.
+```{r}
+fitControl = trainControl(method = "repeatedcv", number = 10, repeats = 3)
+set.seed(100)
+svm.model = train(status ~., data = train, method = "svmRadial", trControl = fitControl)
+svm.model
+svm.result = predict(svm.model, newdata = test)
+confusionMatrix(test$status, svm.result)
+
+
+set.seed(100)
+smallsvm.model = train(status ~sex +cp + thalach +exang +oldpeak, data = train, 
+                 method = "svmRadial",
+                 trControl = fitControl)
+smallsvm.result = predict(smallsvm.model, newdata = test)
+confusionMatrix(test$status, smallsvm.result)
+
+set.seed(100)
+allbutonesvm.model = train(status ~sex +cp + thalach +exang +oldpeak+restecg+fbs+chol+age, data = train, 
+                 method = "svmRadial",
+                 trControl = fitControl)
+allbutonesvm.result = predict(allbutonesvm.model, newdata = test)
+confusionMatrix(test$status, allbutonesvm.result)
+```
+
+Variable importance for the full svm model, using ROC value as variable importance. 
+```{r}
+importance = varImp(svm.model, scale=FALSE)
+importance
+plot(importance)
+```
+
+## Approach 4: Random forests
+
+with 10 fold, 3 repeat cross validation to tune the parameter mtry. Training the full model, the model using the five selected features (sex, cp, thalach, exang, oldpeak), and the model using all predictors except trestbps.
+```{r}
+fitControl = trainControl(method = "repeatedcv", number = 10, repeats = 3)
+set.seed(100)
+rf.model = train(status~., data=train, method="rf", trControl = fitControl)
+rf.model
+rf.result = predict(rf.model, test)
+confusionMatrix(test$status, rf.result)
+predictors(rf.model)
+```
+
+Small random forests model using only the 5 selected predictors.
+```{r}
+set.seed(100)
+fitControl = trainControl(method = "repeatedcv", number = 10, repeats = 3)
+smallrf.model = train(status~sex +cp + thalach +exang +oldpeak, data=train, method="rf")
+smallrf.model
+smallrf.result = predict(smallrf.model, test)
+confusionMatrix(test$status, smallrf.result)
+```
+
+```{r}
+set.seed(100)
+fitControl = trainControl(method = "repeatedcv", number = 10, repeats = 3)
+allbutonerf.model = train(status~sex +cp + thalach +exang +oldpeak+restecg+fbs+chol+age, data=train, method="rf")
+allbutonerf.model
+allbutonerf.result = predict(allbutonerf.model, test)
+confusionMatrix(test$status, allbutonerf.result)
+```
+
+
+Variable selection via recursive variable elimination using random forests
+```{r}
+set.seed(100)
+control = rfeControl(functions=rfFuncs, method="cv", number=10, repeats = 3, returnResamp = "all")
+results = rfe(train[, 1:10], train[, 11],  rfeControl=control)
+results
+print(results)
+predictors(results)
+plot(results, type = c("g", "o"))
+```
+
+
+## Approach 5: Single layer neural network
+
+Using 10 fold, 3 repeat cross validation to tune the parameters size and decay. Training the full model, the model using the five selected features (sex, cp, thalach, exang, oldpeak), and the model using all predictors except trestbps.
+```{r}
+fitControl = trainControl(method = "repeatedcv", number = 10, repeats = 3)
+set.seed(100)
+nnet.model = train(status ~ ., data = train, method = "nnet",  trControl = fitControl, verbose = FALSE, trace=FALSE)
+nnet.model
+nnet.result = predict(nnet.model, test)
+confusionMatrix(test$status, nnet.result)
+```
+
+
+```{r}
+set.seed(100)
+smallnnet.model = train(status ~ sex +cp + thalach +exang +oldpeak, data = train, method = "nnet",  trControl = fitControl, verbose = FALSE, trace=FALSE)
+smallnnet.model
+smallnnet.result = predict(smallnnet.model, test)
+confusionMatrix(test$status, smallnnet.result)
+```
+```{r}
+set.seed(100)
+allbutonennet.model = train(status ~ sex +cp + thalach +exang +oldpeak+restecg+fbs+chol+age, data = train, method = "nnet",  trControl = fitControl, verbose = FALSE, trace=FALSE)
+allbutonennet.model
+allbutonennet.result = predict(allbutonennet.model, test)
+confusionMatrix(test$status, allbutonennet.result)
+```
+
+
+variable importance based on neural network model, using ROC value as variable importance. 
+```{r}
+ggplot(nnet.model)
+importance = varImp(nnet.model, scale=FALSE)
+importance
+plot(importance)
+```
+
+
+
+
+
+
+
+
+
